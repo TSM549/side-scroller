@@ -26,6 +26,7 @@ YELLOW = (255, 220, 90)
 GRAVITY = 0.7
 PLAYER_SPEED = 5
 JUMP_POWER = -14
+SCROLL_SPEED = 2
 
 LEVELS = [
     [(0, 420, 900, 80)],
@@ -84,17 +85,24 @@ class Player:
         pygame.draw.ellipse(surface, GREEN, (x, self.rect.y, 42, 42))
         pygame.draw.circle(surface, BLACK, (x + 13, self.rect.y + 16), 4)
         pygame.draw.circle(surface, BLACK, (x + 29, self.rect.y + 16), 4)
-        pygame.draw.arc(surface, BLACK, (x + 12, self.rect.y + 18, 20, 15), 0, 3.14, 2)
 
 
 class Enemy:
-    def __init__(self, x, y):
+    def __init__(self, x, y, platform):
         self.rect = pygame.Rect(x, y, 38, 35)
         self.speed = random.choice([-2, 2])
+        self.left_limit = platform.left
+        self.right_limit = platform.right - self.rect.width
         self.alive = True
 
     def update(self):
         self.rect.x += self.speed
+        if self.rect.left <= self.left_limit:
+            self.rect.left = self.left_limit
+            self.speed = abs(self.speed)
+        elif self.rect.left >= self.right_limit:
+            self.rect.left = self.right_limit
+            self.speed = -abs(self.speed)
 
     def draw(self, surface, camera):
         if self.alive:
@@ -106,16 +114,16 @@ class Enemy:
             pygame.draw.circle(surface, BLACK, (x + 27, self.rect.y + 12), 2)
 
 
-def create_level():
+def create_level(offset=0):
     template = random.choice(LEVELS)
-    platforms = [pygame.Rect(x, y, w, h) for x, y, w, h in template]
+    platforms = [pygame.Rect(x + offset, y, w, h) for x, y, w, h in template]
 
     enemies = []
 
     for platform in platforms:
         if platform.width > 120 and random.random() < 0.8:
             x = random.randint(platform.left + 30, platform.right - 50)
-            enemies.append(Enemy(x, platform.top - 35))
+            enemies.append(Enemy(x, platform.top - 35, platform))
 
     return platforms, enemies
 
@@ -130,11 +138,13 @@ def main():
     platforms, enemies = create_level()
 
     score = 0
+    defeated_enemies = 0
     start_time = pygame.time.get_ticks()
     camera = 0
     game_over = False
     level = 1
-    level_start = 0
+    level_end = max(platform.right for platform in platforms)
+    level_boundaries = []
 
     while True:
         clock.tick(FPS)
@@ -155,9 +165,6 @@ def main():
         if not game_over:
             player.update(platforms)
 
-            elapsed = (pygame.time.get_ticks() - start_time) // 1000
-            score = elapsed * 10 + (score // 50) * 50
-
             for enemy in enemies:
                 enemy.update()
 
@@ -166,7 +173,7 @@ def main():
                         player.rect.bottom = enemy.rect.top
                         player.velocity_y = JUMP_POWER * 0.65
                         enemy.alive = False
-                        score += 50
+                        defeated_enemies += 1
                     else:
                         player.health -= 1
                         player.rect.x -= 70
@@ -175,20 +182,33 @@ def main():
                         if player.health <= 0:
                             game_over = True
 
+            elapsed = (pygame.time.get_ticks() - start_time) // 1000
+            score = elapsed * 10 + defeated_enemies * 50
+
             if player.rect.y > HEIGHT + 100:
                 player.health = 0
                 game_over = True
 
-            if player.rect.x - camera > WIDTH * 0.65:
-                camera = player.rect.x - WIDTH * 0.65
+            camera += SCROLL_SPEED
+            if player.rect.right < camera:
+                game_over = True
 
-            if player.rect.x - level_start > 1800:
-                level_start = player.rect.x
-                level += 1
-                platforms, enemies = create_level()
+            while camera + WIDTH + 100 >= level_end:
+                level_boundaries.append(level_end)
+                new_platforms, new_enemies = create_level(level_end)
+                platforms.extend(new_platforms)
+                enemies.extend(new_enemies)
+                level_end = max(platform.right for platform in new_platforms)
 
-                player.rect.y = 250
-                player.velocity_y = 0
+            passed_levels = sum(boundary <= camera for boundary in level_boundaries)
+            if passed_levels:
+                level += passed_levels
+                level_boundaries = [
+                    boundary for boundary in level_boundaries if boundary > camera
+                ]
+
+            platforms = [platform for platform in platforms if platform.right > camera - 100]
+            enemies = [enemy for enemy in enemies if enemy.rect.right > camera - 100]
 
         screen.fill((100, 190, 255))
 
